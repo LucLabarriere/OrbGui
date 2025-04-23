@@ -1,0 +1,33 @@
+Diagnostics:
+  ClangTidy:
+    Add:
+      - modernize-*
+      - cppcoreguidelines-*
+      - bugprone-*
+      - misc-*
+
+    Remove:
+      - cppcoreguidelines-avoid-magic-numbers
+      - cppcoreguidelines-pro-bounds-array-to-pointer-decay
+      - cppcoreguidelines-pro-bounds-pointer-arithmetic
+      - cppcoreguidelines-owning-memory
+      - cppcoreguidelines-pro-bounds-constant-array-index
+      - cppcoreguidelines-pro-type-vararg
+      - cppcoreguidelines-pro-type-union-access
+      - cppcoreguidelines-prefer-member-initializer
+      - cppcoreguidelines-avoid-non-const-global-variables
+      - cppcoreguidelines-non-private-member-variables-in-classes
+      - cppcoreguidelines-macro-usage
+      - cppcoreguidelines-rvalue-reference-param-not-moved
+      - cppcoreguidelines-pro-type-reinterpret-cast
+      - misc-misplaced-const
+      - misc-non-private-member-variables-in-classes
+      - misc-confusable-identifiers
+      - bugprone-easily-swappable-parameters
+      - bugprone-exception-escape
+      - modernize-use-designated-initializers
+
+    CheckOptions:
+      { key:   cppcoreguidelines-rvalue-reference-param-not-moved.AllowPartialMove, value: true }
+
+  UnusedIncludes: None

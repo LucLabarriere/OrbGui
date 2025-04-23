@@ -1,0 +1,59 @@
+---
+BasedOnStyle: Microsoft
+AccessModifierOffset: -4
+AlignAfterOpenBracket: Align
+AlignArrayOfStructures: Right
+AllowShortCaseLabelsOnASingleLine: true
+BracedInitializerIndentWidth: 4
+AlignConsecutiveAssignments:
+  Enabled: true
+AlignConsecutiveDeclarations:
+  Enabled: true
+AlignEscapedNewlines: Left
+AlignOperands: AlignAfterOperator
+PackConstructorInitializers: CurrentLine
+BinPackParameters: false
+BinPackArguments: false
+InsertBraces: false
+SpacesInContainerLiterals: true
+AllowShortBlocksOnASingleLine: Always
+AllowAllArgumentsOnNextLine: false
+AllowShortFunctionsOnASingleLine: Inline
+AllowShortIfStatementsOnASingleLine: AllIfsAndElse
+BreakConstructorInitializers: BeforeColon
+PenaltyBreakOpenParenthesis: 10
+PenaltyBreakBeforeFirstCallParameter: 0
+PenaltyBreakAssignment: 0
+AllowShortLoopsOnASingleLine: false
+AllowShortLambdasOnASingleLine: All
+LambdaBodyIndentation: Signature
+BreakBeforeBinaryOperators: NonAssignment
+AlwaysBreakTemplateDeclarations: Yes
+BraceWrapping:
+  AfterCaseLabel: true
+  AfterClass: true
+  AfterControlStatement: Always
+  AfterEnum: true
+  AfterFunction: true
+  AfterNamespace: true
+  AfterStruct: true
+  AfterExternBlock: true
+  BeforeCatch: true
+  BeforeElse: true
+  SplitEmptyFunction: true
+  SplitEmptyRecord: false
+  SplitEmptyNamespace: false
+NamespaceIndentation: All
+UseTab: Never
+IndentWidth: 4
+TabWidth: 4
+ColumnLimit: 0
+SpaceInEmptyBlock: true
+SpaceBeforeRangeBasedForLoopColon: true
+SpaceBeforeInheritanceColon: true
+SpaceBeforeCtorInitializerColon: true
+SpaceBeforeCpp11BracedList: true
+Cpp11BracedListStyle: false
+SpaceBeforeCaseColon: false
+PointerAlignment: Left
+SpaceAfterTemplateKeyword: true
