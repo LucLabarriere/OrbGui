@@ -5,10 +5,12 @@
 
 auto main() -> int {
     auto sample = sample_t::create().unwrap();
+    auto& 
 
     while (!sample.window_should_close())
     {
         sample.begin_loop_step().unwrap();
+
         sample.end_loop_step().unwrap();
     }
 

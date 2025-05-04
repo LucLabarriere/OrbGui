@@ -1,4 +1,4 @@
-add_library(orbgui STATIC src/core.cpp)
+add_library(orbgui STATIC src/orbgui.cpp)
 
 add_library(orb::orbgui ALIAS orbgui)
 
