@@ -2,6 +2,7 @@
 
 #include <orb/box.hpp>
 #include <orb/result.hpp>
+#include <orb/vk/enums.hpp>
 
 #define ORB_DEFINE_VK_HANDLE(object) typedef struct object##_T*(object);
 
@@ -21,7 +22,7 @@ namespace orb::gui
     struct instance_create_info_t
     {
         orb::weak<vk::device_t> device;
-        VkFormat                format;
+        vk::format format;
     };
 
     class instance_t

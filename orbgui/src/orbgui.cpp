@@ -1,6 +1,7 @@
 #include <orb/renderer.hpp>
 
 #include "orbgui/orbgui.hpp"
+#include "orb/vk/core.hpp"
 
 namespace orb::gui
 {
@@ -28,44 +29,44 @@ namespace orb::gui
     auto instance_t::create(const instance_create_info_t& info) -> orb::result<instance_t>
     {
         auto renderer = orb::make_box<renderer_t>();
-        renderer->device = info.device;
+        //renderer->device = info.device;
 
-        renderer->attachments.add({
-            .img_format        = r->swapchain->format.format,
-            .samples           = vk::sample_count_flags::_1,
-            .load_ops          = vk::attachment_load_ops::clear,
-            .store_ops         = vk::attachment_store_ops::store,
-            .stencil_load_ops  = vk::attachment_load_ops::dont_care,
-            .stencil_store_ops = vk::attachment_store_ops::dont_care,
-            .initial_layout    = vk::image_layouts::undefined,
-            .final_layout      = vk::image_layouts::present_src_khr,
-            .attachment_layout = vk::image_layouts::color_attachment_optimal,
-        });
+        //renderer->attachments.add({
+        //    .img_format        = r->swapchain->format.format,
+        //    .samples           = vk::sample_count_flag::_1,
+        //    .load_ops          = vk::attachment_load_op::clear,
+        //    .store_ops         = vk::attachment_store_op::store,
+        //    .stencil_load_ops  = vk::attachment_load_op::dont_care,
+        //    .stencil_store_ops = vk::attachment_store_op::dont_care,
+        //    .initial_layout    = vk::image_layout::undefined,
+        //    .final_layout      = vk::image_layout::present_src_khr,
+        //    .attachment_layout = vk::image_layout::color_attachment_optimal,
+        //});
 
-        const auto [color_descs, color_refs] = renderer->attachments.spans(0, 1);
+        //const auto [color_descs, color_refs] = renderer->attachments.spans(0, 1);
 
-        renderer->subpasses.add_subpass({
-            .bind_point = vk::pipeline_bind_points::graphics,
-            .color_refs = color_refs,
-        });
+        //renderer->subpasses.add_subpass({
+        //    .bind_point = vk::pipeline_bind_point::graphics,
+        //    .color_refs = color_refs,
+        //});
 
-        renderer->subpasses.add_dependency({
-            .src        = vk::subpass_external,
-            .dst        = 0,
-            .src_stage  = vk::pipeline_stage_flags::color_attachment_output,
-            .dst_stage  = vk::pipeline_stage_flags::color_attachment_output,
-            .src_access = 0,
-            .dst_access = vk::access_flags::color_attachment_write,
-        });
+        //renderer->subpasses.add_dependency({
+        //    .src        = vk::subpass_external,
+        //    .dst        = 0,
+        //    .src_stage  = vk::pipeline_stage_flag::color_attachment_output,
+        //    .dst_stage  = vk::pipeline_stage_flag::color_attachment_output,
+        //    .src_access = 0,
+        //    .dst_access = vk::access_flag::color_attachment_write,
+        //});
 
-        renderer->render_pass = vk::render_pass_builder_t::prepare(info.device)
-                                    .unwrap()
-                                    .clear_color({ 0.0f, 0.0f, 0.0f, 1.0f })
-                                    .build(renderer->subpasses, renderer->attachments)
-                                    .unwrap();
+        //renderer->render_pass = vk::render_pass_builder_t::prepare(info.device->handle)
+        //                            .unwrap()
+        //                            .clear_color({ 0.0f, 0.0f, 0.0f, 1.0f })
+        //                            .build(renderer->subpasses, renderer->attachments)
+        //                            .unwrap();
 
-        renderer->views = sample.create_views();
-        renderer->fbs   = sample.create_fbs();
+        //renderer->views = sample.create_views();
+        //renderer->fbs   = sample.create_fbs();
 
         return instance_t { std::move(renderer) };
     }
@@ -80,25 +81,25 @@ namespace orb::gui
     {
     }
 
-    auto sample_t::create_views() -> vk::views_t
-    {
-        return vk::views_builder_t::prepare(m_renderer->device->handle)
-            .unwrap()
-            .images(m_renderer->swapchain->images)
-            .aspect_mask(vk::image_aspect_flags::color)
-            .format(vk::formats::b8g8r8a8_srgb)
-            .build()
-            .unwrap();
-    }
+    //auto instance_t::create_views() -> vk::views_t
+    //{
+    //    return vk::views_builder_t::prepare(m_renderer->device->handle)
+    //        .unwrap()
+    //        .images(m_renderer->swapchain->images)
+    //        .aspect_mask(vk::image_aspect_flags::color)
+    //        .format(vk::formats::b8g8r8a8_srgb)
+    //        .build()
+    //        .unwrap();
+    //}
 
-    auto sample_t::create_fbs() -> vk::framebuffers_t
-    {
-        return vk::framebuffers_builder_t::prepare(m_renderer->device.getmut(),
-                                                   m_renderer->pass->render_pass->handle)
-            .unwrap()
-            .size(m_renderer->swapchain->width, m_renderer->swapchain->height)
-            .attachments(m_renderer->pass->views.handles)
-            .build()
-            .unwrap();
-    }
+    //auto instance_t::create_fbs() -> vk::framebuffers_t
+    //{
+    //    return vk::framebuffers_builder_t::prepare(m_renderer->device.getmut(),
+    //                                               m_renderer->pass->render_pass->handle)
+    //        .unwrap()
+    //        .size(m_renderer->swapchain->width, m_renderer->swapchain->height)
+    //        .attachments(m_renderer->pass->views.handles)
+    //        .build()
+    //        .unwrap();
+    //}
 } // namespace orb::gui

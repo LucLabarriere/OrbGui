@@ -1,11 +1,10 @@
-#include <orbgui/core.hpp>
+#include <orbgui/orbgui.hpp>
 #include <orb/print.hpp>
 
 #include "sample.hpp"
 
 auto main() -> int {
     auto sample = sample_t::create().unwrap();
-    auto& 
 
     while (!sample.window_should_close())
     {

@@ -77,8 +77,8 @@ auto sample_t::create() -> orb::result<sample_t>
 
         r->gpu = vk::gpu_selector_t::prepare(r->instance->handle)
                      .unwrap()
-                     .prefer_type(vk::gpu_types::discrete)
-                     .prefer_type(vk::gpu_types::integrated)
+                     .prefer_type(vk::gpu_type::discrete)
+                     .prefer_type(vk::gpu_type::integrated)
                      .select()
                      .unwrap();
 
@@ -130,56 +130,56 @@ auto sample_t::create() -> orb::result<sample_t>
                 .fb_dimensions_from_window()
                 .present_queue_family_index(graphics_qf->index)
 
-                .usage(vk::image_usage_flags::color_attachment)
-                .color_space(vk::color_spaces::srgb_nonlinear_khr)
-                .format(vk::formats::b8g8r8a8_srgb)
-                .format(vk::formats::r8g8b8a8_srgb)
-                .format(vk::formats::b8g8r8_srgb)
-                .format(vk::formats::r8g8b8_srgb)
+                .usage(vk::image_usage_flag::color_attachment)
+                .color_space(vk::color_space::srgb_nonlinear_khr)
+                .format(vk::format::b8g8r8a8_srgb)
+                .format(vk::format::r8g8b8a8_srgb)
+                .format(vk::format::b8g8r8_srgb)
+                .format(vk::format::r8g8b8_srgb)
 
-                .present_mode(vk::present_modes::mailbox_khr)
-                .present_mode(vk::present_modes::immediate_khr)
-                .present_mode(vk::present_modes::fifo_khr)
+                .present_mode(vk::present_mode::mailbox_khr)
+                .present_mode(vk::present_mode::immediate_khr)
+                .present_mode(vk::present_mode::fifo_khr)
 
                 .build()
                 .unwrap();
 
         r->pass->attachments.add({
             .img_format        = r->swapchain->format.format,
-            .samples           = vk::sample_count_flags::_1,
-            .load_ops          = vk::attachment_load_ops::clear,
-            .store_ops         = vk::attachment_store_ops::store,
-            .stencil_load_ops  = vk::attachment_load_ops::dont_care,
-            .stencil_store_ops = vk::attachment_store_ops::dont_care,
-            .initial_layout    = vk::image_layouts::undefined,
-            .final_layout      = vk::image_layouts::present_src_khr,
-            .attachment_layout = vk::image_layouts::color_attachment_optimal,
+            .samples           = vk::sample_count_flag::_1,
+            .load_ops          = vk::attachment_load_op::clear,
+            .store_ops         = vk::attachment_store_op::store,
+            .stencil_load_ops  = vk::attachment_load_op::dont_care,
+            .stencil_store_ops = vk::attachment_store_op::dont_care,
+            .initial_layout    = vk::image_layout::undefined,
+            .final_layout      = vk::image_layout::present_src_khr,
+            .attachment_layout = vk::image_layout::color_attachment_optimal,
         });
 
-        // const auto [color_descs, color_refs] = r->pass->attachments.spans(0, 1);
+        const auto [color_descs, color_refs] = r->pass->attachments.spans(0, 1);
 
-        // r->pass->subpasses.add_subpass({
-        //     .bind_point = vk::pipeline_bind_points::graphics,
-        //     .color_refs = color_refs,
-        // });
+        r->pass->subpasses.add_subpass({
+            .bind_point = vk::pipeline_bind_point::graphics,
+            .color_refs = color_refs,
+        });
 
-        // r->pass->subpasses.add_dependency({
-        //     .src        = vk::subpass_external,
-        //     .dst        = 0,
-        //     .src_stage  = vk::pipeline_stage_flags::color_attachment_output,
-        //     .dst_stage  = vk::pipeline_stage_flags::color_attachment_output,
-        //     .src_access = 0,
-        //     .dst_access = vk::access_flags::color_attachment_write,
-        // });
+        r->pass->subpasses.add_dependency({
+            .src        = vk::subpass_external,
+            .dst        = 0,
+            .src_stage  = vk::pipeline_stage_flag::color_attachment_output,
+            .dst_stage  = vk::pipeline_stage_flag::color_attachment_output,
+            .src_access = 0,
+            .dst_access = vk::access_flag::color_attachment_write,
+        });
 
-        // r->pass->render_pass = vk::render_pass_builder_t::prepare(r->device->handle)
-        //                            .unwrap()
-        //                            .clear_color({ 0.0f, 0.0f, 0.0f, 1.0f })
-        //                            .build(r->pass->subpasses, r->pass->attachments)
-        //                            .unwrap();
+        r->pass->render_pass = vk::render_pass_builder_t::prepare(r->device->handle)
+                                   .unwrap()
+                                   .clear_color({ 0.0f, 0.0f, 0.0f, 1.0f })
+                                   .build(r->pass->subpasses, r->pass->attachments)
+                                   .unwrap();
 
-        // r->pass->views = sample.create_views();
-        // r->pass->fbs   = sample.create_fbs();
+        r->pass->views = sample.create_views();
+        r->pass->fbs   = sample.create_fbs();
 
         const path vs_path { SAMPLE_DIR "main.vs.glsl" };
         const path fs_path { SAMPLE_DIR "main.fs.glsl" };
@@ -189,7 +189,7 @@ auto sample_t::create() -> orb::result<sample_t>
             .option_target_env(shaderc_target_env_vulkan,
                                shaderc_env_version_vulkan_1_2)
             .option_generate_debug_info()
-            .option_target_spirv(shaderc_spirv_version_1_3)
+            .option_target_spirv(shaderc_spirv_version_1_4)
             .option_source_language(shaderc_source_language_glsl)
             .option_optimization_level(shaderc_optimization_level_zero)
             .option_warnings_as_errors();
@@ -202,7 +202,7 @@ auto sample_t::create() -> orb::result<sample_t>
         auto vs_shader_module =
             vk::shader_module_builder_t::prepare(r->device.getmut(), &compiler)
                 .unwrap()
-                .kind(vk::shader_kinds::glsl_vertex)
+                .kind(vk::shader_kind::glsl_vertex)
                 .entry_point("main")
                 .content(std::move(vs_content))
                 .build()
@@ -211,7 +211,7 @@ auto sample_t::create() -> orb::result<sample_t>
         auto fs_shader_module =
             vk::shader_module_builder_t::prepare(r->device.getmut(), &compiler)
                 .unwrap()
-                .kind(vk::shader_kinds::glsl_fragment)
+                .kind(vk::shader_kind::glsl_fragment)
                 .entry_point("main")
                 .content(std::move(fs_content))
                 .build()
@@ -228,15 +228,15 @@ auto sample_t::create() -> orb::result<sample_t>
             vk::pipeline_builder_t ::prepare(r->device.getmut())
                 .unwrap()
                 ->shader_stages()
-                .stage(vs_shader_module, vk::shader_stage_flags::vertex, "main")
-                .stage(fs_shader_module, vk::shader_stage_flags::fragment, "main")
+                .stage(vs_shader_module, vk::shader_stage_flag::vertex, "main")
+                .stage(fs_shader_module, vk::shader_stage_flag::fragment, "main")
                 .dynamic_states()
-                .dynamic_state(vk::dynamic_states::viewport)
-                .dynamic_state(vk::dynamic_states::scissor)
+                .dynamic_state(vk::dynamic_state::viewport)
+                .dynamic_state(vk::dynamic_state::scissor)
                 .vertex_input()
-                .binding<Vertex>(0, vk::vertex_input_rates::vertex)
-                .attribute(0, offsetof(Vertex, pos), vk::vertex_formats::vec2_t)
-                .attribute(1, offsetof(Vertex, col), vk::vertex_formats::vec3_t)
+                .binding<Vertex>(0, vk::vertex_input_rate::vertex)
+                .attribute(0, offsetof(Vertex, pos), vk::vertex_format::vec2_t)
+                .attribute(1, offsetof(Vertex, col), vk::vertex_format::vec3_t)
                 .input_assembly()
                 .viewport_states()
                 .viewport(0.0f, 0.0f, (f32)r->swapchain->width, (f32)r->swapchain->height, 0.0f, 1.0f)
@@ -246,7 +246,8 @@ auto sample_t::create() -> orb::result<sample_t>
                 .color_blending()
                 .new_color_blend_attachment()
                 .end_attachment()
-                .layout()
+                .desc_set_layout()
+                .pipeline_layout()
                 .prepare_pipeline()
                 .render_pass(r->pass->render_pass.getmut())
                 .subpass(0)
@@ -257,7 +258,7 @@ auto sample_t::create() -> orb::result<sample_t>
         // Synchronization
         r->pass->sync_objects = vk::sync_objects_builder_t::prepare(r->device.getmut())
                                     .unwrap()
-                                    .semaphores(max_frames_in_flight * 2)
+                                    .semaphores(max_frames_in_flight + r->swapchain->images.size())
                                     .fences(max_frames_in_flight)
                                     .build()
                                     .unwrap();
@@ -266,14 +267,14 @@ auto sample_t::create() -> orb::result<sample_t>
         r->graphics_cmd_pool =
             vk::cmd_pool_builder_t::prepare(r->device.getmut(), graphics_qf->index)
                 .unwrap()
-                .flag(vk::command_pool_create_flags::reset_command_buffer_bit)
+                .flag(vk::command_pool_create_flag::reset_command_buffer)
                 .build()
                 .unwrap();
 
         r->transfer_cmd_pool =
             vk::cmd_pool_builder_t::prepare(r->device.getmut(), transfer_qf->index)
                 .unwrap()
-                .flag(vk::command_pool_create_flags::reset_command_buffer_bit)
+                .flag(vk::command_pool_create_flag::reset_command_buffer)
                 .build()
                 .unwrap();
 
@@ -295,8 +296,8 @@ auto sample_t::create() -> orb::result<sample_t>
             vk::vertex_buffer_builder_t::prepare(r->device.getmut())
                 .unwrap()
                 .vertices<Vertex>(vertices)
-                .buffer_usage_flag(vk::buffer_usage_flags::transfer_destination)
-                .memory_flags(vk::vma_alloc_flags::dedicated_memory)
+                .buffer_usage_flag(vk::buffer_usage_flag::transfer_destination)
+                .memory_flags(vk::memory_flag::dedicated_memory)
                 .build()
                 .unwrap();
 
@@ -305,8 +306,8 @@ auto sample_t::create() -> orb::result<sample_t>
             vk::index_buffer_builder_t::prepare(r->device.getmut())
                 .unwrap()
                 .indices(std::span<const ui16> { indices })
-                .buffer_usage_flag(vk::buffer_usage_flags::transfer_destination)
-                .memory_flags(vk::vma_alloc_flags::dedicated_memory)
+                .buffer_usage_flag(vk::buffer_usage_flag::transfer_destination)
+                .memory_flags(vk::memory_flag::dedicated_memory)
                 .build()
                 .unwrap();
 
@@ -332,7 +333,7 @@ auto sample_t::create() -> orb::result<sample_t>
         println("- Submitting copy command buffer");
         vk::submit_helper_t::prepare()
             .cmd_buffer(&cpy_cmd.handle)
-            .wait_stage(vk::pipeline_stage_flags::transfer)
+            .wait_stage(vk::pipeline_stage_flag::transfer)
             .submit(transfer_qf->queues.front())
             .unwrap();
 
@@ -353,7 +354,7 @@ auto sample_t::create() -> orb::result<sample_t>
         println("- Submitting copy command buffer");
         vk::submit_helper_t::prepare()
             .cmd_buffer(&cpy_cmd.handle)
-            .wait_stage(vk::pipeline_stage_flags::transfer)
+            .wait_stage(vk::pipeline_stage_flag::transfer)
             .submit(transfer_qf->queues.front())
             .unwrap();
 
@@ -391,7 +392,6 @@ auto sample_t::begin_loop_step() -> orb::result<void>
 
     auto fences               = r->pass->sync_objects.fences(frame, 1);
     auto img_avail_sems       = r->pass->sync_objects.semaphores(frame, 1);
-    auto render_finished_sems = r->pass->sync_objects.semaphores(frame + max_frames_in_flight, 1);
 
     // Wait fences
     fences.wait().unwrap();
@@ -410,13 +410,14 @@ auto sample_t::begin_loop_step() -> orb::result<void>
     }
     else if (res.is_error())
     {
-        return error_t { "Acquire img error: {}", vk::vkres::get_repr(res.error()) };
+        return orb::error_t { "Acquire img error: {}", vk::vkres::get_repr(res.error()) };
     }
 
     // Reset fences
     fences.reset().unwrap();
 
     r->image_index = res.img_index();
+    auto render_finished_sems = r->pass->sync_objects.semaphores(r->image_index + max_frames_in_flight, 1);
 
     // Render to the framebuffer
     r->pass->render_pass->begin_info.framebuffer       = r->pass->fbs.handles[r->image_index];
@@ -465,14 +466,14 @@ auto sample_t::end_loop_step() -> orb::result<void>
     auto img_index            = r->image_index;
     auto fences               = r->pass->sync_objects.fences(frame, 1);
     auto img_avail_sems       = r->pass->sync_objects.semaphores(frame, 1);
-    auto render_finished_sems = r->pass->sync_objects.semaphores(frame + max_frames_in_flight, 1);
+    auto render_finished_sems = r->pass->sync_objects.semaphores(r->image_index + max_frames_in_flight, 1);
 
     // Submit render
     vk::submit_helper_t::prepare()
         .wait_semaphores(img_avail_sems.handles)
         .signal_semaphores(render_finished_sems.handles)
         .cmd_buffer(&r->current_cmd.handle)
-        .wait_stage(vk::pipeline_stage_flags::color_attachment_output)
+        .wait_stage(vk::pipeline_stage_flag::color_attachment_output)
         .submit(r->graphics_qf->queues.front(), fences.handles.back())
         .unwrap();
 
@@ -491,7 +492,7 @@ auto sample_t::end_loop_step() -> orb::result<void>
     }
     else if (present_res.is_error())
     {
-        return error_t { "Frame present error: {}", vk::vkres::get_repr(present_res.error()) };
+        return orb::error_t { "Frame present error: {}", vk::vkres::get_repr(present_res.error()) };
     }
 
     return {};
@@ -507,8 +508,8 @@ auto sample_t::create_views() -> vk::views_t
     return vk::views_builder_t::prepare(m_renderer->device->handle)
         .unwrap()
         .images(m_renderer->swapchain->images)
-        .aspect_mask(vk::image_aspect_flags::color)
-        .format(vk::formats::b8g8r8a8_srgb)
+        .aspect_mask(vk::image_aspect_flag::color)
+        .format(vk::format::b8g8r8a8_srgb)
         .build()
         .unwrap();
 }
