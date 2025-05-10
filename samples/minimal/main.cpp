@@ -28,7 +28,7 @@ namespace
         vk::subpasses_t          subpasses;
         vk::render_pass_t        render_pass;
         vk::views_t              views;
-        vk::framebuffers_t       fbs;
+        vk::sync_objects_t       sync_objects;
     };
 
     auto initialize_backend()
@@ -122,8 +122,25 @@ namespace
                            .build()
                            .unwrap();
 
+        fmt::println("- Creating synchronization objects");
+        // Synchronization
+        b->sync_objects = vk::sync_objects_builder_t::prepare(b->device.getmut())
+                              .unwrap()
+                              .semaphores(max_frames_in_flight + b->swapchain->images.size())
+                              .fences(max_frames_in_flight)
+                              .build()
+                              .unwrap();
+
         return b;
     }
+
+    struct render_info_t
+    {
+        vk::semaphores_t wait;
+        vk::semaphores_t signal;
+        vk::fences_t     signal_fence;
+        ui32 img_index = 0; // TODO: replace this, we should not render to swapchain image
+    };
 
     struct gui_backend_t
     {
@@ -135,12 +152,14 @@ namespace
         vk::shader_module_t          vs_shader_module;
         vk::shader_module_t          fs_shader_module;
         box<vk::graphics_pipeline_t> pipeline;
-        vk::sync_objects_t           sync_objects;
         box<vk::cmd_pool_t>          graphics_cmd_pool;
         box<vk::cmd_pool_t>          transfer_cmd_pool;
         vk::cmd_buffers_t            draw_cmds;
         vk::vertex_buffer_t          vertex_buffer;
         vk::index_buffer_t           index_buffer;
+        VkExtent2D                   extent;
+        VkQueue                      graphics_queue;
+        ui32                         frame = 0;
 
         void create_views(backend_t& backend)
         {
@@ -162,11 +181,63 @@ namespace
                             .build()
                             .unwrap();
         };
+
+        void render(render_info_t& info)
+        {
+            // Render to the framebuffer
+            this->render_pass->begin_info.framebuffer       = this->fbs.handles[info.img_index];
+            this->render_pass->begin_info.renderArea.extent = this->extent;
+
+            // Begin command buffer recording
+            auto cmd = this->draw_cmds.get(this->frame).unwrap();
+            cmd.begin_one_time().unwrap();
+
+            // Begin the render pass
+            this->render_pass->begin(cmd.handle);
+
+            // Bind the graphics pipeline
+            vkCmdBindPipeline(cmd.handle, VK_PIPELINE_BIND_POINT_GRAPHICS, this->pipeline->handle);
+            std::array<VkDeviceSize, 1> offsets = { 0 };
+            vkCmdBindVertexBuffers(cmd.handle, 0, 1, &this->vertex_buffer.buffer, offsets.data());
+            vkCmdBindIndexBuffer(cmd.handle, this->index_buffer.buffer, 0, this->index_buffer.index_type);
+
+            // Set viewport and scissor
+            auto& viewport        = this->pipeline->viewports.back();
+            auto& scissor         = this->pipeline->scissors.back();
+            viewport.width        = static_cast<f32>(this->extent.width);
+            viewport.height       = static_cast<f32>(this->extent.height);
+            scissor.extent.width  = this->extent.width;
+            scissor.extent.height = this->extent.height;
+            vkCmdSetViewport(cmd.handle, 0, 1, &viewport);
+            vkCmdSetScissor(cmd.handle, 0, 1, &scissor);
+
+            // Draw quad
+            vkCmdDrawIndexed(cmd.handle, 6, 1, 0, 0, 0);
+
+            // End the render pass
+            this->render_pass->end(cmd.handle);
+
+            // End command buffer recording
+            cmd.end().unwrap();
+
+            // Submit render
+            vk::submit_helper_t::prepare()
+                .wait_semaphores(info.wait.handles)
+                .signal_semaphores(info.signal.handles)
+                .cmd_buffer(&cmd.handle)
+                .wait_stage(vk::pipeline_stage_flag::color_attachment_output)
+                .submit(this->graphics_queue, info.signal_fence.handles.back())
+                .unwrap();
+
+            frame = (frame + 1) % max_frames_in_flight;
+        }
     };
 
     auto initialize_gui_backend(auto& backend)
     {
-        auto gb = make_box<gui_backend_t>();
+        auto gb            = make_box<gui_backend_t>();
+        gb->extent         = backend->swapchain->extent;
+        gb->graphics_queue = backend->graphics_qf->queues.front();
 
         gb->attachments.add({
             .img_format        = backend->swapchain->format.format,
@@ -272,15 +343,6 @@ namespace
                            .subpass(0)
                            .build()
                            .unwrap();
-
-        fmt::println("- Creating synchronization objects");
-        // Synchronization
-        gb->sync_objects = vk::sync_objects_builder_t::prepare(backend->device.getmut())
-                               .unwrap()
-                               .semaphores(max_frames_in_flight + backend->swapchain->images.size())
-                               .fences(max_frames_in_flight)
-                               .build()
-                               .unwrap();
 
         fmt::println("- Creating command pool and command buffers");
         gb->graphics_cmd_pool = vk::cmd_pool_builder_t::prepare(backend->device.getmut(), backend->graphics_qf->index)
@@ -394,8 +456,8 @@ auto main() -> int
                 continue;
             }
 
-            auto fences         = gui_backend->sync_objects.fences(frame, 1);
-            auto img_avail_sems = gui_backend->sync_objects.semaphores(frame, 1);
+            auto fences         = backend->sync_objects.fences(frame, 1);
+            auto img_avail_sems = backend->sync_objects.semaphores(frame, 1);
 
             // Wait fences
             fences.wait().unwrap();
@@ -423,52 +485,17 @@ auto main() -> int
 
             uint32_t img_index = res.img_index();
 
-            auto render_finished_sems = gui_backend->sync_objects.semaphores(img_index + max_frames_in_flight, 1);
+            auto          render_finished_sems = backend->sync_objects.semaphores(img_index + max_frames_in_flight, 1);
+            render_info_t render_info {
+                .wait         = img_avail_sems,
+                .signal       = render_finished_sems,
+                .signal_fence = fences,
+                .img_index    = img_index,
+            };
 
-            // Render to the framebuffer
-            gui_backend->render_pass->begin_info.framebuffer       = gui_backend->fbs.handles[img_index];
-            gui_backend->render_pass->begin_info.renderArea.extent = backend->swapchain->extent;
+            gui_backend->render(render_info);
 
-            // Begin command buffer recording
-            auto cmd = gui_backend->draw_cmds.get(frame).unwrap();
-            cmd.begin_one_time().unwrap();
-
-            // Begin the render pass
-            gui_backend->render_pass->begin(cmd.handle);
-
-            // Bind the graphics pipeline
-            vkCmdBindPipeline(cmd.handle, VK_PIPELINE_BIND_POINT_GRAPHICS, gui_backend->pipeline->handle);
-            std::array<VkDeviceSize, 1> offsets = { 0 };
-            vkCmdBindVertexBuffers(cmd.handle, 0, 1, &gui_backend->vertex_buffer.buffer, offsets.data());
-            vkCmdBindIndexBuffer(cmd.handle, gui_backend->index_buffer.buffer, 0, gui_backend->index_buffer.index_type);
-
-            // Set viewport and scissor
-            auto& viewport        = gui_backend->pipeline->viewports.back();
-            auto& scissor         = gui_backend->pipeline->scissors.back();
-            viewport.width        = static_cast<f32>(backend->swapchain->width);
-            viewport.height       = static_cast<f32>(backend->swapchain->height);
-            scissor.extent.width  = backend->swapchain->width;
-            scissor.extent.height = backend->swapchain->height;
-            vkCmdSetViewport(cmd.handle, 0, 1, &viewport);
-            vkCmdSetScissor(cmd.handle, 0, 1, &scissor);
-
-            // Draw quad
-            vkCmdDrawIndexed(cmd.handle, 6, 1, 0, 0, 0);
-
-            // End the render pass
-            gui_backend->render_pass->end(cmd.handle);
-
-            // End command buffer recording
-            cmd.end().unwrap();
-
-            // Submit render
-            vk::submit_helper_t::prepare()
-                .wait_semaphores(img_avail_sems.handles)
-                .signal_semaphores(render_finished_sems.handles)
-                .cmd_buffer(&cmd.handle)
-                .wait_stage(vk::pipeline_stage_flag::color_attachment_output)
-                .submit(backend->graphics_qf->queues.front(), fences.handles.back())
-                .unwrap();
+            /* TODO This is on the user side */
 
             // Present the rendered image
             auto present_res = vk::present_helper_t::prepare()
