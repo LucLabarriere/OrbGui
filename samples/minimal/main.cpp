@@ -419,7 +419,7 @@ namespace
         fmt::println("- Creating vertex buffer");
         gb->vertex_buffer = vk::vertex_buffer_builder_t::prepare(backend->device.getmut())
                                 .unwrap()
-                                .template vertices<vertex_t>(vertices)
+                                .vertices(vertices)
                                 .buffer_usage_flag(vk::buffer_usage_flag::transfer_destination)
                                 .memory_flags(vk::memory_flag::dedicated_memory)
                                 .build()
