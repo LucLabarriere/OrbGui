@@ -1,534 +1,298 @@
-// #include "sample.hpp"
-// 
-// #include <orb/eval.hpp>
-// #include <orb/renderer.hpp>
-// #include <orb/time.hpp>
-// 
-// #include <thread>
-// 
-// using namespace orb;
-// 
-// static constexpr ui32 max_frames_in_flight = 2;
-// 
-// struct gui_render_pass_t
-// {
-//     orb::box<vk::render_pass_t>       render_pass;
-//     orb::box<vk::graphics_pipeline_t> pipeline;
-// 
-//     vk::attachments_t   attachments;
-//     vk::subpasses_t     subpasses;
-//     vk::vertex_buffer_t vertex_buffer;
-//     vk::index_buffer_t  index_buffer;
-//     vk::sync_objects_t  sync_objects;
-//     vk::views_t         views;
-//     vk::framebuffers_t  fbs;
-//     vk::cmd_buffers_t   draw_cmds;
-// };
-// 
-// struct renderer_t
-// {
-//     orb::box<glfw::driver_t>      glfw_driver;
-//     orb::box<vk::instance_t>      instance;
-//     orb::box<vk::gpu_t>           gpu;
-//     orb::box<vk::device_t>        device;
-//     orb::box<vk::swapchain_t>     swapchain;
-//     vk::surface_t                 surface;
-//     orb::box<vk::cmd_pool_t>      graphics_cmd_pool;
-//     orb::box<vk::cmd_pool_t>      transfer_cmd_pool;
-//     orb::weak<glfw::window_t>     window;
-//     orb::weak<vk::queue_family_t> graphics_qf;
-//     orb::weak<vk::queue_family_t> transfer_qf;
-// 
-//     orb::box<gui_render_pass_t> pass;
-// 
-//     ui32             current_frame = 0;
-//     ui32             image_index   = 0;
-//     vk::cmd_buffer_t current_cmd;
-// };
-// 
-// auto sample_t::create() -> orb::result<sample_t>
-// {
-//     auto renderer  = orb::make_box<renderer_t>();
-//     renderer->pass = orb::make_box<gui_render_pass_t>();
-// 
-//     orb::weak<renderer_t> r = renderer.getmut();
-//     sample_t              sample { std::move(renderer) };
-// 
-//     try
-//     {
-//         r->glfw_driver = glfw::driver_t::create().unwrap();
-// 
-//         r->window = r->glfw_driver->create_window_for_vk().unwrap();
-//         r->instance =
-//             vk::instance_builder_t::prepare()
-//                 .unwrap()
-//                 .add_glfw_required_extensions()
-//                 .molten_vk(orb::on_macos ? true : false)
-//                 .add_extension(vk::khr_extensions::device_properties_2)
-//                 .add_extension(vk::extensions::debug_utils)
-//                 .debug_layer(vk::validation_layers::validation)
-//                 .build()
-//                 .unwrap();
-// 
-//         r->surface =
-//             vk::surface_builder_t::prepare(r->instance->handle, r->window)
-//                 .build()
-//                 .unwrap();
-// 
-//         r->gpu = vk::gpu_selector_t::prepare(r->instance->handle)
-//                      .unwrap()
-//                      .prefer_type(vk::gpu_type::discrete)
-//                      .prefer_type(vk::gpu_type::integrated)
-//                      .select()
-//                      .unwrap();
-// 
-//         r->gpu->describe();
-// 
-//         auto [graphics_qf, transfer_qf] = orb::eval | [&] {
-//             std::span graphics_qfs = r->gpu->queue_family_map->graphics().unwrap();
-//             std::span transfer_qfs = r->gpu->queue_family_map->transfer().unwrap();
-// 
-//             auto graphics_qf = graphics_qfs.front();
-// 
-//             auto transfer_qf = orb::eval | [&] {
-//                 for (auto qf : transfer_qfs)
-//                 {
-//                     if (qf->index != graphics_qf->index)
-//                     {
-//                         return qf;
-//                     }
-//                 }
-// 
-//                 return transfer_qfs.front();
-//             };
-// 
-//             return std::make_tuple(graphics_qf, transfer_qf);
-//         };
-// 
-//         r->graphics_qf = graphics_qf;
-//         r->transfer_qf = transfer_qf;
-// 
-//         println("- Selected graphics queue family {} with {} queues",
-//                 graphics_qf->index,
-//                 graphics_qf->properties.queueCount);
-// 
-//         println("- Selected transfer queue family {} with {} queues",
-//                 transfer_qf->index,
-//                 transfer_qf->properties.queueCount);
-// 
-//         r->device = vk::device_builder_t::prepare(r->instance->handle)
-//                         .unwrap()
-//                         .add_extension(vk::khr_extensions::swapchain)
-//                         .add_queue(graphics_qf, 1.0f)
-//                         .add_queue(transfer_qf, 1.0f)
-//                         .build(*r->gpu)
-//                         .unwrap();
-// 
-//         r->swapchain =
-//             vk::swapchain_builder_t::prepare(r->instance.getmut(), r->gpu.getmut(), r->device.getmut(), r->window, &r->surface)
-//                 .unwrap()
-//                 .fb_dimensions_from_window()
-//                 .present_queue_family_index(graphics_qf->index)
-// 
-//                 .usage(vk::image_usage_flag::color_attachment)
-//                 .color_space(vk::color_space::srgb_nonlinear_khr)
-//                 .format(vk::format::b8g8r8a8_srgb)
-//                 .format(vk::format::r8g8b8a8_srgb)
-//                 .format(vk::format::b8g8r8_srgb)
-//                 .format(vk::format::r8g8b8_srgb)
-// 
-//                 .present_mode(vk::present_mode::mailbox_khr)
-//                 .present_mode(vk::present_mode::immediate_khr)
-//                 .present_mode(vk::present_mode::fifo_khr)
-// 
-//                 .build()
-//                 .unwrap();
-// 
-//         r->pass->attachments.add({
-//             .img_format        = r->swapchain->format.format,
-//             .samples           = vk::sample_count_flag::_1,
-//             .load_ops          = vk::attachment_load_op::clear,
-//             .store_ops         = vk::attachment_store_op::store,
-//             .stencil_load_ops  = vk::attachment_load_op::dont_care,
-//             .stencil_store_ops = vk::attachment_store_op::dont_care,
-//             .initial_layout    = vk::image_layout::undefined,
-//             .final_layout      = vk::image_layout::present_src_khr,
-//             .attachment_layout = vk::image_layout::color_attachment_optimal,
-//         });
-// 
-//         const auto [color_descs, color_refs] = r->pass->attachments.spans(0, 1);
-// 
-//         r->pass->subpasses.add_subpass({
-//             .bind_point = vk::pipeline_bind_point::graphics,
-//             .color_refs = color_refs,
-//         });
-// 
-//         r->pass->subpasses.add_dependency({
-//             .src        = vk::subpass_external,
-//             .dst        = 0,
-//             .src_stage  = vk::pipeline_stage_flag::color_attachment_output,
-//             .dst_stage  = vk::pipeline_stage_flag::color_attachment_output,
-//             .src_access = 0,
-//             .dst_access = vk::access_flag::color_attachment_write,
-//         });
-// 
-//         r->pass->render_pass = vk::render_pass_builder_t::prepare(r->device->handle)
-//                                    .unwrap()
-//                                    .clear_color({ 0.0f, 0.0f, 0.0f, 1.0f })
-//                                    .build(r->pass->subpasses, r->pass->attachments)
-//                                    .unwrap();
-// 
-//         r->pass->views = sample.create_views();
-//         r->pass->fbs   = sample.create_fbs();
-// 
-//         const path vs_path { SAMPLE_DIR "main.vs.glsl" };
-//         const path fs_path { SAMPLE_DIR "main.fs.glsl" };
-// 
-//         vk::spirv_compiler_t compiler;
-//         compiler
-//             .option_target_env(shaderc_target_env_vulkan,
-//                                shaderc_env_version_vulkan_1_2)
-//             .option_generate_debug_info()
-//             .option_target_spirv(shaderc_spirv_version_1_4)
-//             .option_source_language(shaderc_source_language_glsl)
-//             .option_optimization_level(shaderc_optimization_level_zero)
-//             .option_warnings_as_errors();
-// 
-//         println("- Reading shader files");
-//         auto vs_content = vs_path.read_file().unwrap();
-//         auto fs_content = fs_path.read_file().unwrap();
-// 
-//         println("- Creating shader modules");
-//         auto vs_shader_module =
-//             vk::shader_module_builder_t::prepare(r->device.getmut(), &compiler)
-//                 .unwrap()
-//                 .kind(vk::shader_kind::glsl_vertex)
-//                 .entry_point("main")
-//                 .content(std::move(vs_content))
-//                 .build()
-//                 .unwrap();
-// 
-//         auto fs_shader_module =
-//             vk::shader_module_builder_t::prepare(r->device.getmut(), &compiler)
-//                 .unwrap()
-//                 .kind(vk::shader_kind::glsl_fragment)
-//                 .entry_point("main")
-//                 .content(std::move(fs_content))
-//                 .build()
-//                 .unwrap();
-// 
-//         struct Vertex
-//         {
-//             std::array<float, 2> pos;
-//             std::array<float, 3> col;
-//         };
-// 
-//         println("- Creating graphics pipeline");
-//         r->pass->pipeline =
-//             vk::pipeline_builder_t ::prepare(r->device.getmut())
-//                 .unwrap()
-//                 ->shader_stages()
-//                 .stage(vs_shader_module, vk::shader_stage_flag::vertex, "main")
-//                 .stage(fs_shader_module, vk::shader_stage_flag::fragment, "main")
-//                 .dynamic_states()
-//                 .dynamic_state(vk::dynamic_state::viewport)
-//                 .dynamic_state(vk::dynamic_state::scissor)
-//                 .vertex_input()
-//                 .binding<Vertex>(0, vk::vertex_input_rate::vertex)
-//                 .attribute(0, offsetof(Vertex, pos), vk::vertex_format::vec2_t)
-//                 .attribute(1, offsetof(Vertex, col), vk::vertex_format::vec3_t)
-//                 .input_assembly()
-//                 .viewport_states()
-//                 .viewport(0.0f, 0.0f, (f32)r->swapchain->width, (f32)r->swapchain->height, 0.0f, 1.0f)
-//                 .scissor(0.0f, 0.0f, r->swapchain->width, r->swapchain->height)
-//                 .rasterizer()
-//                 .multisample()
-//                 .color_blending()
-//                 .new_color_blend_attachment()
-//                 .end_attachment()
-//                 .desc_set_layout()
-//                 .pipeline_layout()
-//                 .prepare_pipeline()
-//                 .render_pass(r->pass->render_pass.getmut())
-//                 .subpass(0)
-//                 .build()
-//                 .unwrap();
-// 
-//         println("- Creating synchronization objects");
-//         // Synchronization
-//         r->pass->sync_objects = vk::sync_objects_builder_t::prepare(r->device.getmut())
-//                                     .unwrap()
-//                                     .semaphores(max_frames_in_flight + r->swapchain->images.size())
-//                                     .fences(max_frames_in_flight)
-//                                     .build()
-//                                     .unwrap();
-// 
-//         println("- Creating command pool and command buffers");
-//         r->graphics_cmd_pool =
-//             vk::cmd_pool_builder_t::prepare(r->device.getmut(), graphics_qf->index)
-//                 .unwrap()
-//                 .flag(vk::command_pool_create_flag::reset_command_buffer)
-//                 .build()
-//                 .unwrap();
-// 
-//         r->transfer_cmd_pool =
-//             vk::cmd_pool_builder_t::prepare(r->device.getmut(), transfer_qf->index)
-//                 .unwrap()
-//                 .flag(vk::command_pool_create_flag::reset_command_buffer)
-//                 .build()
-//                 .unwrap();
-// 
-//         println("- Creating command buffers");
-//         r->pass->draw_cmds =
-//             r->graphics_cmd_pool->alloc_cmds(max_frames_in_flight).unwrap();
-// 
-//         std::vector<Vertex> vertices = {
-//             { { -0.5f, -0.5f }, { 1.0f, 0.0f, 0.0f } },
-//             {  { 0.5f, -0.5f }, { 0.0f, 1.0f, 0.0f } },
-//             {   { 0.5f, 0.5f }, { 0.0f, 0.0f, 1.0f } },
-//             {  { -0.5f, 0.5f }, { 1.0f, 1.0f, 1.0f } }
-//         };
-// 
-//         std::vector<ui16> indices = { 0, 1, 2, 2, 3, 0 };
-// 
-//         println("- Creating vertex buffer");
-//         r->pass->vertex_buffer =
-//             vk::vertex_buffer_builder_t::prepare(r->device.getmut())
-//                 .unwrap()
-//                 .vertices<Vertex>(vertices)
-//                 .buffer_usage_flag(vk::buffer_usage_flag::transfer_destination)
-//                 .memory_flags(vk::memory_flag::dedicated_memory)
-//                 .build()
-//                 .unwrap();
-// 
-//         println("- Creating index buffer");
-//         r->pass->index_buffer =
-//             vk::index_buffer_builder_t::prepare(r->device.getmut())
-//                 .unwrap()
-//                 .indices(std::span<const ui16> { indices })
-//                 .buffer_usage_flag(vk::buffer_usage_flag::transfer_destination)
-//                 .memory_flags(vk::memory_flag::dedicated_memory)
-//                 .build()
-//                 .unwrap();
-// 
-//         println("- Creating staging buffer");
-//         auto staging_buffer = vk::staging_buffer_builder_t::prepare(
-//                                   r->device.getmut(),
-//                                   r->pass->vertex_buffer.size)
-//                                   .unwrap()
-//                                   .build()
-//                                   .unwrap();
-// 
-//         println("- Copying vertices to staging buffer");
-//         staging_buffer.transfer(vertices.data(), sizeof(Vertex) * vertices.size())
-//             .unwrap();
-// 
-//         println("- Copying staging buffer to vertex buffer");
-//         auto cpy_cmd = r->transfer_cmd_pool->alloc_cmds(1).unwrap().get(0).unwrap();
-// 
-//         cpy_cmd.begin_one_time().unwrap();
-//         cpy_cmd.copy_buffer(staging_buffer.buffer, r->pass->vertex_buffer.buffer, r->pass->vertex_buffer.size);
-//         cpy_cmd.end().unwrap();
-// 
-//         println("- Submitting copy command buffer");
-//         vk::submit_helper_t::prepare()
-//             .cmd_buffer(&cpy_cmd.handle)
-//             .submit(transfer_qf->queues.front())
-//             .unwrap();
-// 
-//         r->device->wait().unwrap();
-// 
-//         println("- Copying indices to staging buffer");
-//         staging_buffer.transfer(indices.data(), sizeof(ui16) * indices.size())
-//             .unwrap();
-// 
-//         println("- Copying staging buffer to index buffer");
-//         cpy_cmd = r->transfer_cmd_pool->alloc_cmds(1).unwrap().get(0).unwrap();
-// 
-//         cpy_cmd.begin_one_time().unwrap();
-//         println("Index buffer size: {}", r->pass->index_buffer.size);
-//         cpy_cmd.copy_buffer(staging_buffer.buffer, r->pass->index_buffer.buffer, r->pass->index_buffer.size);
-//         cpy_cmd.end().unwrap();
-// 
-//         println("- Submitting copy command buffer");
-//         vk::submit_helper_t::prepare()
-//             .cmd_buffer(&cpy_cmd.handle)
-//             .submit(transfer_qf->queues.front())
-//             .unwrap();
-// 
-//         r->device->wait().unwrap();
-// 
-//         ui32 frame = 0;
-// 
-//         r->device->wait().unwrap();
-//     }
-//     catch (const orb::exception& e)
-//     {
-//         return orb::error_t { e.what() };
-//     }
-// 
-//     return std::move(sample);
-// }
-// 
-// auto sample_t::window_should_close() const -> bool
-// {
-//     return m_renderer->window->should_close();
-// }
-// 
-// auto sample_t::begin_loop_step() -> orb::result<void>
-// {
-//     auto r = m_renderer.getmut();
-//     r->glfw_driver->poll_events();
-//     ui32 frame = r->current_frame;
-// 
-//     if (r->window->minimized())
-//     {
-//         using namespace std::literals;
-//         std::this_thread::sleep_for(orb::milliseconds_t(100));
-//         return {};
-//     }
-// 
-//     auto fences         = r->pass->sync_objects.fences(frame, 1);
-//     auto img_avail_sems = r->pass->sync_objects.semaphores(frame, 1);
-// 
-//     // Wait fences
-//     fences.wait().unwrap();
-// 
-//     // Acquire the next swapchain image
-//     auto res = vk::acquire_img(*r->swapchain, img_avail_sems.handles.back(), nullptr);
-// 
-//     if (res.require_sc_rebuild())
-//     {
-//         r->device->wait().unwrap();
-//         r->swapchain->rebuild().unwrap();
-//         r->pass->views = create_views();
-//         r->pass->fbs   = create_fbs();
-// 
-//         return {};
-//     }
-//     else if (res.is_error())
-//     {
-//         return orb::error_t { "Acquire img error: {}", vk::vkres::get_repr(res.error()) };
-//     }
-// 
-//     // Reset fences
-//     fences.reset().unwrap();
-// 
-//     r->image_index            = res.img_index();
-//     auto render_finished_sems = r->pass->sync_objects.semaphores(r->image_index + max_frames_in_flight, 1);
-// 
-//     // Render to the framebuffer
-//     r->pass->render_pass->begin_info.framebuffer       = r->pass->fbs.handles[r->image_index];
-//     r->pass->render_pass->begin_info.renderArea.extent = r->swapchain->extent;
-// 
-//     // Begin command buffer recording
-//     r->current_cmd = r->pass->draw_cmds.get(frame).unwrap();
-//     r->current_cmd.begin_one_time().unwrap();
-// 
-//     // Begin the render pass
-//     r->pass->render_pass->begin(r->current_cmd.handle);
-// 
-//     // Bind the graphics pipeline
-//     vkCmdBindPipeline(r->current_cmd.handle, VK_PIPELINE_BIND_POINT_GRAPHICS, r->pass->pipeline->handle);
-//     std::array<VkDeviceSize, 1> offsets = { 0 };
-//     vkCmdBindVertexBuffers(r->current_cmd.handle, 0, 1, &r->pass->vertex_buffer.buffer, offsets.data());
-//     vkCmdBindIndexBuffer(r->current_cmd.handle, r->pass->index_buffer.buffer, 0, r->pass->index_buffer.index_type);
-// 
-//     // Set viewport and scissor
-//     auto& viewport        = r->pass->pipeline->viewports.back();
-//     auto& scissor         = r->pass->pipeline->scissors.back();
-//     viewport.width        = static_cast<f32>(r->swapchain->width);
-//     viewport.height       = static_cast<f32>(r->swapchain->height);
-//     scissor.extent.width  = r->swapchain->width;
-//     scissor.extent.height = r->swapchain->height;
-//     vkCmdSetViewport(r->current_cmd.handle, 0, 1, &viewport);
-//     vkCmdSetScissor(r->current_cmd.handle, 0, 1, &scissor);
-// 
-//     // Draw quad
-//     vkCmdDrawIndexed(r->current_cmd.handle, static_cast<ui32>(r->pass->index_buffer.count), 1, 0, 0, 0);
-// 
-//     return {};
-// }
-// 
-// auto sample_t::end_loop_step() -> orb::result<void>
-// {
-//     auto r = m_renderer.getmut();
-// 
-//     // End the render pass
-//     r->pass->render_pass->end(r->current_cmd.handle);
-// 
-//     // End command buffer recording
-//     r->current_cmd.end().unwrap();
-// 
-//     auto frame                = r->current_frame;
-//     auto img_index            = r->image_index;
-//     auto fences               = r->pass->sync_objects.fences(frame, 1);
-//     auto img_avail_sems       = r->pass->sync_objects.semaphores(frame, 1);
-//     auto render_finished_sems = r->pass->sync_objects.semaphores(r->image_index + max_frames_in_flight, 1);
-// 
-//     std::vector<VkPipelineStageFlags> wait_stages = {
-//         vkenum(vk::pipeline_stage_flag::color_attachment_output),
-//     };
-// 
-//     // Submit render
-//     vk::submit_helper_t::prepare()
-//         .wait_semaphores(img_avail_sems.handles, wait_stages)
-//         .signal_semaphores(render_finished_sems.handles)
-//         .cmd_buffer(&r->current_cmd.handle)
-//         .submit(r->graphics_qf->queues.front(), fences.handles.back())
-//         .unwrap();
-// 
-//     // Present the rendered image
-//     auto present_res = vk::present_helper_t::prepare()
-//                            .swapchain(*r->swapchain)
-//                            .wait_semaphores(render_finished_sems.handles)
-//                            .img_index(img_index)
-//                            .present(r->graphics_qf->queues.front());
-// 
-//     r->current_frame = (frame + 1) % max_frames_in_flight;
-// 
-//     if (present_res.require_sc_rebuild())
-//     {
-//         return {};
-//     }
-//     else if (present_res.is_error())
-//     {
-//         return orb::error_t { "Frame present error: {}", vk::vkres::get_repr(present_res.error()) };
-//     }
-// 
-//     return {};
-// }
-// 
-// auto sample_t::terminate() -> orb::result<void>
-// {
-//     return m_renderer->device->wait();
-// }
-// 
-// auto sample_t::create_views() -> vk::views_t
-// {
-//     return vk::views_builder_t::prepare(m_renderer->device->handle)
-//         .unwrap()
-//         .images(m_renderer->swapchain->images)
-//         .aspect_mask(vk::image_aspect_flag::color)
-//         .format(vk::format::b8g8r8a8_srgb)
-//         .build()
-//         .unwrap();
-// }
-// 
-// auto sample_t::create_fbs() -> vk::framebuffers_t
-// {
-//     return vk::framebuffers_builder_t::prepare(m_renderer->device.getmut(),
-//                                                m_renderer->pass->render_pass->handle)
-//         .unwrap()
-//         .size(m_renderer->swapchain->width, m_renderer->swapchain->height)
-//         .attachments(m_renderer->pass->views.handles)
-//         .build()
-//         .unwrap();
-// }
-// 
-// sample_t::sample_t(orb::box<renderer_t> renderer)
-//     : m_renderer(std::move(renderer))
-// {
-// }
-// 
-// sample_t::~sample_t() = default;
+#include "sample.hpp"
+
+#include <orb/eval.hpp>
+#include <orb/renderer.hpp>
+#include <orb/time.hpp>
+
+#include <thread>
+
+using namespace orb;
+
+static constexpr ui32 max_frames_in_flight = 2;
+
+struct renderer_t
+{
+    box<glfw::driver_t>      glfw_driver;
+    weak<glfw::window_t>     window;
+    box<vk::instance_t>      instance;
+    vk::surface_t            surface;
+    box<vk::gpu_t>           gpu;
+    weak<vk::queue_family_t> graphics_qf;
+    weak<vk::queue_family_t> transfer_qf;
+    box<vk::device_t>        device;
+    box<vk::swapchain_t>     swapchain;
+    vk::attachments_t        attachments;
+    vk::subpasses_t          subpasses;
+    vk::render_pass_t        render_pass;
+    vk::views_t              views;
+    vk::fences_t             frame_ready_fences;
+    vk::semaphores_t         blit_finished_semaphores;
+    vk::semaphores_t         image_avail_semaphores;
+    box<vk::cmd_pool_t>      graphics_cmd_pool;
+    box<vk::cmd_pool_t>      transfer_cmd_pool;
+    vk::cmd_buffers_t        blit_cmds;
+    ui32                     frame     = 0;
+    ui32                     img_index = 0;
+};
+
+sample_t::~sample_t() = default;
+
+auto sample_t::create() -> orb::result<sample_t>
+{
+    auto b = make_box<renderer_t>();
+
+    b->glfw_driver = glfw::driver_t::create().unwrap();
+
+    b->window   = b->glfw_driver->create_window_for_vk().unwrap();
+    b->instance = vk::instance_builder_t::prepare()
+                      .unwrap()
+                      .add_glfw_required_extensions()
+                      .molten_vk(orb::on_macos ? true : false)
+                      .add_extension(vk::khr_extensions::device_properties_2)
+                      .add_extension(vk::extensions::debug_utils)
+                      .debug_layer(vk::validation_layers::validation)
+                      .build()
+                      .unwrap();
+
+    b->surface = vk::surface_builder_t::prepare(b->instance->handle, b->window).build().unwrap();
+
+    b->gpu = vk::gpu_selector_t::prepare(b->instance->handle)
+                 .unwrap()
+                 .prefer_type(vk::gpu_type::discrete)
+                 .prefer_type(vk::gpu_type::integrated)
+                 .select()
+                 .unwrap();
+
+    b->gpu->describe();
+
+    auto [graphics_qf, transfer_qf] = orb::eval | [&] {
+        std::span graphics_qfs = b->gpu->queue_family_map->graphics().unwrap();
+        std::span transfer_qfs = b->gpu->queue_family_map->transfer().unwrap();
+
+        auto graphics_qf = graphics_qfs.front();
+
+        auto transfer_qf = orb::eval | [&] {
+            for (auto qf : transfer_qfs)
+            {
+                if (qf->index != graphics_qf->index)
+                {
+                    return qf;
+                }
+            }
+
+            return transfer_qfs.front();
+        };
+
+        return std::make_tuple(graphics_qf, transfer_qf);
+    };
+
+    b->graphics_qf = graphics_qf;
+    b->transfer_qf = transfer_qf;
+
+    fmt::println("- Selected graphics queue family {} with {} queues",
+                 graphics_qf->index,
+                 graphics_qf->properties.queueCount);
+
+    fmt::println("- Selected transfer queue family {} with {} queues",
+                 transfer_qf->index,
+                 transfer_qf->properties.queueCount);
+
+    b->device = vk::device_builder_t::prepare(b->instance->handle)
+                    .unwrap()
+                    .add_extension(vk::khr_extensions::swapchain)
+                    .add_queue(graphics_qf, 1.0f)
+                    .add_queue(transfer_qf, 1.0f)
+                    .build(*b->gpu)
+                    .unwrap();
+
+    b->swapchain = vk::swapchain_builder_t::prepare(b->instance.getmut(),
+                                                    b->gpu.getmut(),
+                                                    b->device.getmut(),
+                                                    b->window,
+                                                    &b->surface)
+                       .unwrap()
+                       .fb_dimensions_from_window()
+                       .present_queue_family_index(graphics_qf->index)
+
+                       .usage(vk::image_usage_flag::color_attachment)
+                       .usage(vk::image_usage_flag::transfer_dst)
+                       .color_space(vk::color_space::srgb_nonlinear_khr)
+                       .format(vk::format::b8g8r8a8_srgb)
+                       .format(vk::format::r8g8b8a8_srgb)
+                       .format(vk::format::b8g8r8_srgb)
+                       .format(vk::format::r8g8b8_srgb)
+
+                       .present_mode(vk::present_mode::mailbox_khr)
+                       .present_mode(vk::present_mode::immediate_khr)
+                       .present_mode(vk::present_mode::fifo_khr)
+
+                       .build()
+                       .unwrap();
+
+    fmt::println("- Creating synchronization objects");
+    // Synchronization
+    b->frame_ready_fences = vk::fences_builder_t::create(b->device.getmut(), max_frames_in_flight).unwrap();
+
+    b->blit_finished_semaphores = vk::semaphores_builder_t::prepare(b->device.getmut())
+                                      .unwrap()
+                                      .count(b->swapchain->images.size())
+                                      .stage(vk::pipeline_stage_flag::color_attachment_output)
+                                      .build()
+                                      .unwrap();
+
+    b->image_avail_semaphores = vk::semaphores_builder_t::prepare(b->device.getmut())
+                                    .unwrap()
+                                    .count(max_frames_in_flight)
+                                    .stage(vk::pipeline_stage_flag::transfer)
+                                    .build()
+                                    .unwrap();
+
+    fmt::println("- Creating command pool and command buffers");
+    b->graphics_cmd_pool = vk::cmd_pool_builder_t::prepare(b->device.getmut(), b->graphics_qf->index)
+                               .unwrap()
+                               .flag(vk::command_pool_create_flag::reset_command_buffer)
+                               .build()
+                               .unwrap();
+
+    b->transfer_cmd_pool = vk::cmd_pool_builder_t::prepare(b->device.getmut(), b->transfer_qf->index)
+                               .unwrap()
+                               .flag(vk::command_pool_create_flag::reset_command_buffer)
+                               .build()
+                               .unwrap();
+
+    fmt::println("- Creating blit command buffers");
+    b->blit_cmds = b->transfer_cmd_pool->alloc_cmds(max_frames_in_flight).unwrap();
+
+    return sample_t { std::move(b) };
+}
+
+auto sample_t::window_should_close() const -> bool
+{
+    return m_renderer->window->should_close();
+}
+
+auto sample_t::begin_loop_step() -> orb::result<void>
+{
+    m_resize_required = false;
+
+    m_renderer->glfw_driver->poll_events();
+
+    if (m_renderer->window->minimized())
+    {
+        using namespace std::literals;
+        std::this_thread::sleep_for(orb::milliseconds_t(100));
+        return {};
+    }
+
+    auto frame_fence = m_renderer->frame_ready_fences[m_renderer->frame];
+    auto img_avail   = m_renderer->image_avail_semaphores.view(m_renderer->frame, 1);
+
+    // Wait fences
+    frame_fence.wait().unwrap();
+
+    // Acquire the next swapchain image
+    auto res = vk::acquire_img(*m_renderer->swapchain, img_avail.handles.back(), nullptr);
+
+    if (res.require_sc_rebuild())
+    {
+        m_renderer->device->wait().unwrap();
+        m_renderer->swapchain->rebuild().unwrap();
+        m_resize_required = true;
+        return {};
+    }
+    else if (res.is_error())
+    {
+        return orb::error_t { "Acquire img error: {}", vk::vkres::get_repr(res.error()) };
+    }
+
+    // Reset fences
+    frame_fence.reset().unwrap();
+
+    m_renderer->img_index = res.img_index();
+
+    return {};
+}
+
+auto sample_t::end_loop_step(VkImage gui_img, orb::vk::semaphores_view_t& gui_rendered_sem) -> orb::result<void>
+{
+    auto blit_cmd      = m_renderer->blit_cmds.get(m_renderer->frame).unwrap();
+    auto frame_fence   = m_renderer->frame_ready_fences[m_renderer->frame];
+    auto img_avail     = m_renderer->image_avail_semaphores.view(m_renderer->frame, 1);
+    auto blit_finished = m_renderer->blit_finished_semaphores.view(m_renderer->img_index, 1);
+
+    blit_cmd.begin_one_time().unwrap();
+
+    auto swapchain_img = m_renderer->swapchain->images[m_renderer->img_index];
+
+    vk::transition_layout(blit_cmd.handle,
+                          gui_img,
+                          vk::image_layout::undefined,
+                          vk::image_layout::transfer_src_optimal);
+
+    vk::transition_layout(blit_cmd.handle,
+                          swapchain_img,
+                          vk::image_layout::undefined,
+                          vk::image_layout::transfer_dst_optimal);
+
+    vk::copy_img(blit_cmd.handle, gui_img, swapchain_img, m_renderer->swapchain->extent);
+
+    vk::transition_layout(blit_cmd.handle,
+                          swapchain_img,
+                          vk::image_layout::transfer_dst_optimal,
+                          vk::image_layout::present_src_khr);
+    blit_cmd.end();
+
+    auto wait_semaphores = img_avail.concat(gui_rendered_sem);
+
+    // Submit blit
+    vk::submit_helper_t::prepare()
+        .wait_semaphores(wait_semaphores)
+        .signal_semaphores(blit_finished.handles)
+        .cmd_buffer(&blit_cmd.handle)
+        .submit(m_renderer->transfer_qf->queues.front(), frame_fence.handle)
+        .unwrap();
+
+    // Present the rendered image
+    auto present_res = vk::present_helper_t::prepare()
+                           .swapchain(*m_renderer->swapchain)
+                           .wait_semaphores(blit_finished.handles)
+                           .img_index(m_renderer->img_index)
+                           .present(m_renderer->graphics_qf->queues.front());
+
+    if (present_res.require_sc_rebuild())
+    {
+        m_resize_required = true;
+        return {};
+    }
+    else if (present_res.is_error())
+    {
+        return orb::error_t { "Frame present error: {}", vk::vkres::get_repr(present_res.error()) };
+    }
+
+    m_renderer->frame = (m_renderer->frame + 1) % max_frames_in_flight;
+
+    return {};
+}
+
+auto sample_t::terminate() -> orb::result<void>
+{
+    return m_renderer->device->wait();
+}
+
+auto sample_t::get_gui_create_info() -> orb::gui::instance_create_info_t
+{
+    return orb::gui::instance_create_info_t {
+        .device         = m_renderer->device.getmut(),
+        .extent_width   = m_renderer->swapchain->extent.width,
+        .extent_height  = m_renderer->swapchain->extent.height,
+        .graphics_queue = m_renderer->graphics_qf->queues.front(),
+        .transfer_queue = m_renderer->transfer_qf->queues.front(),
+        .graphics_qf    = m_renderer->graphics_qf->index,
+        .transfer_qf    = m_renderer->transfer_qf->index,
+    };
+}
+
+sample_t::sample_t(orb::box<renderer_t> renderer)
+    : m_renderer(std::move(renderer))
+{
+}
