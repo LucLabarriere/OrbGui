@@ -8,21 +8,12 @@
 
 ORB_DEFINE_VK_HANDLE(VkDevice)
 
-namespace orb::vk
-{
-    struct views_t;
-    struct framebuffers_t;
-    struct device_t;
-} // namespace orb::vk
-
 namespace orb::gui
 {
-    struct renderer_t;
+    struct gui_renderer_t;
 
     struct instance_create_info_t
     {
-        orb::weak<vk::device_t> device;
-        vk::format format;
     };
 
     class instance_t
@@ -35,16 +26,13 @@ namespace orb::gui
         auto operator=(instance_t const&) -> instance_t&     = delete;
         auto operator=(instance_t&&) noexcept -> instance_t& = default;
 
-        static auto create(const instance_create_info_t& device) -> orb::result<instance_t>;
+        static auto create(const instance_create_info_t& info) -> orb::result<instance_t>;
 
         auto draw() -> orb::result<void>;
 
     private:
-        orb::box<renderer_t> m_renderer;
+        box<gui_renderer_t> m_renderer;
 
-        explicit instance_t(orb::box<renderer_t> renderer);
-
-        auto create_views() -> orb::vk::views_t;
-        auto create_fbs() -> orb::vk::framebuffers_t;
+        explicit instance_t(orb::box<gui_renderer_t> renderer);
     };
 } // namespace orb::gui

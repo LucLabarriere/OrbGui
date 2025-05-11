@@ -26,7 +26,6 @@ namespace
         box<vk::swapchain_t>     swapchain;
         vk::attachments_t        attachments;
         vk::subpasses_t          subpasses;
-        vk::render_pass_t        render_pass;
         vk::views_t              views;
         vk::sync_objects_t       sync_objects;
     };
