@@ -26,8 +26,14 @@ namespace
         box<vk::swapchain_t>     swapchain;
         vk::attachments_t        attachments;
         vk::subpasses_t          subpasses;
+        vk::render_pass_t        render_pass;
         vk::views_t              views;
-        vk::sync_objects_t       sync_objects;
+        vk::fences_t             frame_ready_fences;
+        vk::semaphores_t         blit_finished_semaphores;
+        vk::semaphores_t         image_avail_semaphores;
+        box<vk::cmd_pool_t>      graphics_cmd_pool;
+        box<vk::cmd_pool_t>      transfer_cmd_pool;
+        vk::cmd_buffers_t        blit_cmds;
     };
 
     auto initialize_backend()
@@ -108,6 +114,7 @@ namespace
                            .present_queue_family_index(graphics_qf->index)
 
                            .usage(vk::image_usage_flag::color_attachment)
+                           .usage(vk::image_usage_flag::transfer_dst)
                            .color_space(vk::color_space::srgb_nonlinear_khr)
                            .format(vk::format::b8g8r8a8_srgb)
                            .format(vk::format::r8g8b8a8_srgb)
@@ -123,29 +130,47 @@ namespace
 
         fmt::println("- Creating synchronization objects");
         // Synchronization
-        b->sync_objects = vk::sync_objects_builder_t::prepare(b->device.getmut())
-                              .unwrap()
-                              .semaphores(max_frames_in_flight + b->swapchain->images.size())
-                              .fences(max_frames_in_flight)
-                              .build()
-                              .unwrap();
+        b->frame_ready_fences = vk::fences_builder_t::create(b->device.getmut(), max_frames_in_flight).unwrap();
+
+        b->blit_finished_semaphores = vk::semaphores_builder_t::prepare(b->device.getmut())
+                                          .unwrap()
+                                          .count(b->swapchain->images.size())
+                                          .stage(vk::pipeline_stage_flag::color_attachment_output)
+                                          .build()
+                                          .unwrap();
+
+        b->image_avail_semaphores = vk::semaphores_builder_t::prepare(b->device.getmut())
+                                        .unwrap()
+                                        .count(max_frames_in_flight)
+                                        .stage(vk::pipeline_stage_flag::transfer)
+                                        .build()
+                                        .unwrap();
+
+        fmt::println("- Creating command pool and command buffers");
+        b->graphics_cmd_pool = vk::cmd_pool_builder_t::prepare(b->device.getmut(), b->graphics_qf->index)
+                                   .unwrap()
+                                   .flag(vk::command_pool_create_flag::reset_command_buffer)
+                                   .build()
+                                   .unwrap();
+
+        b->transfer_cmd_pool = vk::cmd_pool_builder_t::prepare(b->device.getmut(), b->transfer_qf->index)
+                                   .unwrap()
+                                   .flag(vk::command_pool_create_flag::reset_command_buffer)
+                                   .build()
+                                   .unwrap();
+
+        fmt::println("- Creating blit command buffers");
+        b->blit_cmds = b->transfer_cmd_pool->alloc_cmds(max_frames_in_flight).unwrap();
 
         return b;
     }
-
-    struct render_info_t
-    {
-        vk::semaphores_t wait;
-        vk::semaphores_t signal;
-        vk::fences_t     signal_fence;
-        ui32 img_index = 0; // TODO: replace this, we should not render to swapchain image
-    };
 
     struct gui_backend_t
     {
         vk::attachments_t            attachments;
         vk::subpasses_t              subpasses;
         box<vk::render_pass_t>       render_pass;
+        vk::images_t                 images;
         vk::views_t                  views;
         vk::framebuffers_t           fbs;
         vk::shader_module_t          vs_shader_module;
@@ -158,15 +183,39 @@ namespace
         vk::index_buffer_t           index_buffer;
         VkExtent2D                   extent;
         VkQueue                      graphics_queue;
+        vk::semaphores_t             render_finished;
         ui32                         frame = 0;
+        vk::semaphores_view_t        finished;
+
+        void create_surfaces(backend_t& backend)
+        {
+            this->create_images(backend);
+            this->create_views(backend);
+            this->create_fbs(backend);
+        }
+
+        void create_images(backend_t& backend)
+        {
+            this->images = vk::images_builder_t::prepare(backend.device->allocator)
+                               .unwrap()
+                               .count(max_frames_in_flight)
+                               .usage(vk::image_usage_flag::color_attachment)
+                               .usage(vk::image_usage_flag::transfer_src)
+                               .size(extent.width, extent.height)
+                               .format(vk::format::b8g8r8a8_unorm)
+                               .mem_usage(vk::memory_usage::usage_auto)
+                               .mem_flags(vk::memory_flag::dedicated_memory)
+                               .build()
+                               .unwrap();
+        }
 
         void create_views(backend_t& backend)
         {
             this->views = vk::views_builder_t::prepare(backend.device->handle)
                               .unwrap()
-                              .images(backend.swapchain->images)
+                              .images(this->images.handles)
                               .aspect_mask(vk::image_aspect_flag::color)
-                              .format(vk::format::b8g8r8a8_srgb)
+                              .format(vk::format::b8g8r8a8_unorm)
                               .build()
                               .unwrap();
         };
@@ -175,16 +224,16 @@ namespace
         {
             this->fbs = vk::framebuffers_builder_t::prepare(backend.device.getmut(), render_pass->handle)
                             .unwrap()
-                            .size(backend.swapchain->width, backend.swapchain->height)
+                            .size(this->extent.width, this->extent.height)
                             .attachments(views.handles)
                             .build()
                             .unwrap();
         };
 
-        void render(render_info_t& info)
+        void render()
         {
             // Render to the framebuffer
-            this->render_pass->begin_info.framebuffer       = this->fbs.handles[info.img_index];
+            this->render_pass->begin_info.framebuffer       = this->fbs.handles[this->frame];
             this->render_pass->begin_info.renderArea.extent = this->extent;
 
             // Begin command buffer recording
@@ -219,13 +268,13 @@ namespace
             // End command buffer recording
             cmd.end().unwrap();
 
+            this->finished = this->render_finished.view(this->frame, 1);
+
             // Submit render
             vk::submit_helper_t::prepare()
-                .wait_semaphores(info.wait.handles)
-                .signal_semaphores(info.signal.handles)
+                .signal_semaphores(this->finished.handles)
                 .cmd_buffer(&cmd.handle)
-                .wait_stage(vk::pipeline_stage_flag::color_attachment_output)
-                .submit(this->graphics_queue, info.signal_fence.handles.back())
+                .submit(this->graphics_queue)
                 .unwrap();
 
             frame = (frame + 1) % max_frames_in_flight;
@@ -239,14 +288,14 @@ namespace
         gb->graphics_queue = backend->graphics_qf->queues.front();
 
         gb->attachments.add({
-            .img_format        = backend->swapchain->format.format,
+            .img_format        = vkenum(vk::format::b8g8r8a8_unorm),
             .samples           = vk::sample_count_flag::_1,
             .load_ops          = vk::attachment_load_op::clear,
             .store_ops         = vk::attachment_store_op::store,
             .stencil_load_ops  = vk::attachment_load_op::dont_care,
             .stencil_store_ops = vk::attachment_store_op::dont_care,
             .initial_layout    = vk::image_layout::undefined,
-            .final_layout      = vk::image_layout::present_src_khr,
+            .final_layout      = vk::image_layout::transfer_src_optimal,
             .attachment_layout = vk::image_layout::color_attachment_optimal,
         });
 
@@ -272,8 +321,7 @@ namespace
                               .build(gb->subpasses, gb->attachments)
                               .unwrap();
 
-        gb->create_views(*backend);
-        gb->create_fbs(*backend);
+        gb->create_surfaces(*backend);
 
         const path vs_path { SAMPLE_DIR "main.vs.glsl" };
         const path fs_path { SAMPLE_DIR "main.fs.glsl" };
@@ -328,8 +376,8 @@ namespace
                            .attribute(1, offsetof(vertex_t, col), vk::vertex_format::vec3_t)
                            .input_assembly()
                            .viewport_states()
-                           .viewport(0.0f, 0.0f, (f32)backend->swapchain->width, (f32)backend->swapchain->height, 0.0f, 1.0f)
-                           .scissor(0.0f, 0.0f, backend->swapchain->width, backend->swapchain->height)
+                           .viewport(0.0f, 0.0f, (f32)gb->extent.width, (f32)gb->extent.height, 0.0f, 1.0f)
+                           .scissor(0.0f, 0.0f, gb->extent.width, gb->extent.height)
                            .rasterizer()
                            .multisample()
                            .color_blending()
@@ -405,7 +453,6 @@ namespace
         fmt::println("- Submitting copy command buffer");
         vk::submit_helper_t::prepare()
             .cmd_buffer(&cpy_cmd.handle)
-            .wait_stage(vk::pipeline_stage_flag::transfer)
             .submit(backend->transfer_qf->queues.front())
             .unwrap();
 
@@ -424,11 +471,18 @@ namespace
         fmt::println("- Submitting copy command buffer");
         vk::submit_helper_t::prepare()
             .cmd_buffer(&cpy_cmd.handle)
-            .wait_stage(vk::pipeline_stage_flag::transfer)
             .submit(backend->transfer_qf->queues.front())
             .unwrap();
 
         backend->device->wait().unwrap();
+
+        fmt::println("- Creating render finished semaphores");
+        gb->render_finished = vk::semaphores_builder_t::prepare(backend->device.getmut())
+                                  .unwrap()
+                                  .count(max_frames_in_flight)
+                                  .stage(vk::pipeline_stage_flag::transfer)
+                                  .build()
+                                  .unwrap();
 
         return gb;
     }
@@ -455,22 +509,21 @@ auto main() -> int
                 continue;
             }
 
-            auto fences         = backend->sync_objects.fences(frame, 1);
-            auto img_avail_sems = backend->sync_objects.semaphores(frame, 1);
+            auto frame_fence = backend->frame_ready_fences[frame];
+            auto img_avail   = backend->image_avail_semaphores.view(frame, 1);
 
             // Wait fences
-            fences.wait().unwrap();
+            frame_fence.wait().unwrap();
 
             // Acquire the next swapchain image
-            auto res = vk::acquire_img(*backend->swapchain, img_avail_sems.handles.back(), nullptr);
+            auto res = vk::acquire_img(*backend->swapchain, img_avail.handles.back(), nullptr);
 
             if (res.require_sc_rebuild())
             {
                 backend->device->wait().unwrap();
                 backend->swapchain->rebuild().unwrap();
 
-                gui_backend->create_views(*backend);
-                gui_backend->create_fbs(*backend);
+                gui_backend->create_surfaces(*backend);
                 continue;
             }
             else if (res.is_error())
@@ -480,26 +533,51 @@ auto main() -> int
             }
 
             // Reset fences
-            fences.reset().unwrap();
+            frame_fence.reset().unwrap();
 
             uint32_t img_index = res.img_index();
 
-            auto          render_finished_sems = backend->sync_objects.semaphores(img_index + max_frames_in_flight, 1);
-            render_info_t render_info {
-                .wait         = img_avail_sems,
-                .signal       = render_finished_sems,
-                .signal_fence = fences,
-                .img_index    = img_index,
-            };
+            auto blit_finished = backend->blit_finished_semaphores.view(img_index, 1);
 
-            gui_backend->render(render_info);
+            gui_backend->render();
 
-            /* TODO This is on the user side */
+            auto blit_cmd = backend->blit_cmds.get(frame).unwrap();
+            blit_cmd.begin_one_time().unwrap();
+
+            auto rendered_img  = gui_backend->images.handles[gui_backend->frame];
+            auto swapchain_img = backend->swapchain->images[img_index];
+
+            vk::transition_layout(blit_cmd.handle,
+                                  rendered_img,
+                                  vk::image_layout::undefined,
+                                  vk::image_layout::transfer_src_optimal);
+            vk::transition_layout(blit_cmd.handle,
+                                  swapchain_img,
+                                  vk::image_layout::undefined,
+                                  vk::image_layout::transfer_dst_optimal);
+
+            vk::copy_img(blit_cmd.handle, rendered_img, swapchain_img, backend->swapchain->extent);
+
+            vk::transition_layout(blit_cmd.handle,
+                                  swapchain_img,
+                                  vk::image_layout::transfer_dst_optimal,
+                                  vk::image_layout::present_src_khr);
+            blit_cmd.end();
+
+            auto wait_semaphores = img_avail.concat(gui_backend->finished);
+
+            // Submit blit
+            vk::submit_helper_t::prepare()
+                .wait_semaphores(wait_semaphores)
+                .signal_semaphores(blit_finished.handles)
+                .cmd_buffer(&blit_cmd.handle)
+                .submit(backend->transfer_qf->queues.front(), frame_fence.handle)
+                .unwrap();
 
             // Present the rendered image
             auto present_res = vk::present_helper_t::prepare()
                                    .swapchain(*backend->swapchain)
-                                   .wait_semaphores(render_finished_sems.handles)
+                                   .wait_semaphores(blit_finished.handles)
                                    .img_index(img_index)
                                    .present(backend->graphics_qf->queues.front());
 
