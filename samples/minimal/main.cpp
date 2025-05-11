@@ -167,6 +167,7 @@ namespace
 
     struct gui_backend_t
     {
+        weak<vk::device_t>           device;
         vk::attachments_t            attachments;
         vk::subpasses_t              subpasses;
         box<vk::render_pass_t>       render_pass;
@@ -183,20 +184,21 @@ namespace
         vk::index_buffer_t           index_buffer;
         VkExtent2D                   extent;
         VkQueue                      graphics_queue;
+        VkQueue                      transfer_queue;
         vk::semaphores_t             render_finished;
         ui32                         frame = 0;
         vk::semaphores_view_t        finished;
 
-        void create_surfaces(backend_t& backend)
+        void create_surfaces()
         {
-            this->create_images(backend);
-            this->create_views(backend);
-            this->create_fbs(backend);
+            this->create_images();
+            this->create_views();
+            this->create_fbs();
         }
 
-        void create_images(backend_t& backend)
+        void create_images()
         {
-            this->images = vk::images_builder_t::prepare(backend.device->allocator)
+            this->images = vk::images_builder_t::prepare(this->device->allocator)
                                .unwrap()
                                .count(max_frames_in_flight)
                                .usage(vk::image_usage_flag::color_attachment)
@@ -209,9 +211,9 @@ namespace
                                .unwrap();
         }
 
-        void create_views(backend_t& backend)
+        void create_views()
         {
-            this->views = vk::views_builder_t::prepare(backend.device->handle)
+            this->views = vk::views_builder_t::prepare(this->device->handle)
                               .unwrap()
                               .images(this->images.handles)
                               .aspect_mask(vk::image_aspect_flag::color)
@@ -220,11 +222,11 @@ namespace
                               .unwrap();
         };
 
-        void create_fbs(backend_t& backend)
+        void create_fbs()
         {
-            this->fbs = vk::framebuffers_builder_t::prepare(backend.device.getmut(), render_pass->handle)
+            this->fbs = vk::framebuffers_builder_t::prepare(device, render_pass->handle)
                             .unwrap()
-                            .size(this->extent.width, this->extent.height)
+                            .size(extent.width, extent.height)
                             .attachments(views.handles)
                             .build()
                             .unwrap();
@@ -281,11 +283,23 @@ namespace
         }
     };
 
-    auto initialize_gui_backend(auto& backend)
+    struct gui_backend_init_info_t
+    {
+        weak<vk::device_t> device;
+        VkExtent2D         extent;
+        VkQueue            graphics_queue;
+        VkQueue            transfer_queue;
+        ui32               graphics_qf;
+        ui32               transfer_qf;
+    };
+
+    auto initialize_gui_backend(gui_backend_init_info_t&& info)
     {
         auto gb            = make_box<gui_backend_t>();
-        gb->extent         = backend->swapchain->extent;
-        gb->graphics_queue = backend->graphics_qf->queues.front();
+        gb->device         = info.device;
+        gb->graphics_queue = info.graphics_queue;
+        gb->transfer_queue = info.transfer_queue;
+        gb->extent         = info.extent;
 
         gb->attachments.add({
             .img_format        = vkenum(vk::format::b8g8r8a8_unorm),
@@ -315,13 +329,13 @@ namespace
             .dst_access = vk::access_flag::color_attachment_write,
         });
 
-        gb->render_pass = vk::render_pass_builder_t::prepare(backend->device->handle)
+        gb->render_pass = vk::render_pass_builder_t::prepare(info.device->handle)
                               .unwrap()
                               .clear_color({ 0.0f, 0.0f, 0.0f, 1.0f })
                               .build(gb->subpasses, gb->attachments)
                               .unwrap();
 
-        gb->create_surfaces(*backend);
+        gb->create_surfaces();
 
         const path vs_path { SAMPLE_DIR "main.vs.glsl" };
         const path fs_path { SAMPLE_DIR "main.fs.glsl" };
@@ -339,7 +353,7 @@ namespace
         auto fs_content = fs_path.read_file().unwrap();
 
         fmt::println("- Creating shader modules");
-        gb->vs_shader_module = vk::shader_module_builder_t::prepare(backend->device.getmut(), &compiler)
+        gb->vs_shader_module = vk::shader_module_builder_t::prepare(info.device, &compiler)
                                    .unwrap()
                                    .kind(vk::shader_kind::glsl_vertex)
                                    .entry_point("main")
@@ -347,7 +361,7 @@ namespace
                                    .build()
                                    .unwrap();
 
-        gb->fs_shader_module = vk::shader_module_builder_t::prepare(backend->device.getmut(), &compiler)
+        gb->fs_shader_module = vk::shader_module_builder_t::prepare(info.device, &compiler)
                                    .unwrap()
                                    .kind(vk::shader_kind::glsl_fragment)
                                    .entry_point("main")
@@ -362,7 +376,7 @@ namespace
         };
 
         fmt::println("- Creating graphics pipeline");
-        gb->pipeline = vk::pipeline_builder_t ::prepare(backend->device.getmut())
+        gb->pipeline = vk::pipeline_builder_t ::prepare(info.device)
                            .unwrap()
                            ->shader_stages()
                            .stage(gb->vs_shader_module, vk::shader_stage_flag::vertex, "main")
@@ -371,7 +385,7 @@ namespace
                            .dynamic_state(vk::dynamic_state::viewport)
                            .dynamic_state(vk::dynamic_state::scissor)
                            .vertex_input()
-                           .template binding<vertex_t>(0, vk::vertex_input_rate::vertex)
+                           .binding<vertex_t>(0, vk::vertex_input_rate::vertex)
                            .attribute(0, offsetof(vertex_t, pos), vk::vertex_format::vec2_t)
                            .attribute(1, offsetof(vertex_t, col), vk::vertex_format::vec3_t)
                            .input_assembly()
@@ -392,13 +406,13 @@ namespace
                            .unwrap();
 
         fmt::println("- Creating command pool and command buffers");
-        gb->graphics_cmd_pool = vk::cmd_pool_builder_t::prepare(backend->device.getmut(), backend->graphics_qf->index)
+        gb->graphics_cmd_pool = vk::cmd_pool_builder_t::prepare(info.device, info.graphics_qf)
                                     .unwrap()
                                     .flag(vk::command_pool_create_flag::reset_command_buffer)
                                     .build()
                                     .unwrap();
 
-        gb->transfer_cmd_pool = vk::cmd_pool_builder_t::prepare(backend->device.getmut(), backend->transfer_qf->index)
+        gb->transfer_cmd_pool = vk::cmd_pool_builder_t::prepare(info.device, info.transfer_qf)
                                     .unwrap()
                                     .flag(vk::command_pool_create_flag::reset_command_buffer)
                                     .build()
@@ -417,7 +431,7 @@ namespace
         std::vector<ui16> indices = { 0, 1, 2, 2, 3, 0 };
 
         fmt::println("- Creating vertex buffer");
-        gb->vertex_buffer = vk::vertex_buffer_builder_t::prepare(backend->device.getmut())
+        gb->vertex_buffer = vk::vertex_buffer_builder_t::prepare(info.device)
                                 .unwrap()
                                 .vertices(vertices)
                                 .buffer_usage_flag(vk::buffer_usage_flag::transfer_destination)
@@ -426,7 +440,7 @@ namespace
                                 .unwrap();
 
         fmt::println("- Creating index buffer");
-        gb->index_buffer = vk::index_buffer_builder_t::prepare(backend->device.getmut())
+        gb->index_buffer = vk::index_buffer_builder_t::prepare(info.device)
                                .unwrap()
                                .indices(std::span<const ui16> { indices })
                                .buffer_usage_flag(vk::buffer_usage_flag::transfer_destination)
@@ -435,7 +449,7 @@ namespace
                                .unwrap();
 
         fmt::println("- Creating staging buffer");
-        auto staging_buffer = vk::staging_buffer_builder_t::prepare(backend->device.getmut(), gb->vertex_buffer.size)
+        auto staging_buffer = vk::staging_buffer_builder_t::prepare(info.device, gb->vertex_buffer.size)
                                   .unwrap()
                                   .build()
                                   .unwrap();
@@ -453,10 +467,10 @@ namespace
         fmt::println("- Submitting copy command buffer");
         vk::submit_helper_t::prepare()
             .cmd_buffer(&cpy_cmd.handle)
-            .submit(backend->transfer_qf->queues.front())
+            .submit(info.transfer_queue)
             .unwrap();
 
-        backend->device->wait().unwrap();
+        info.device->wait().unwrap();
 
         fmt::println("- Copying indices to staging buffer");
         staging_buffer.transfer(indices.data(), sizeof(ui16) * indices.size()).unwrap();
@@ -471,13 +485,13 @@ namespace
         fmt::println("- Submitting copy command buffer");
         vk::submit_helper_t::prepare()
             .cmd_buffer(&cpy_cmd.handle)
-            .submit(backend->transfer_qf->queues.front())
+            .submit(info.transfer_queue)
             .unwrap();
 
-        backend->device->wait().unwrap();
+        info.device->wait().unwrap();
 
         fmt::println("- Creating render finished semaphores");
-        gb->render_finished = vk::semaphores_builder_t::prepare(backend->device.getmut())
+        gb->render_finished = vk::semaphores_builder_t::prepare(info.device)
                                   .unwrap()
                                   .count(max_frames_in_flight)
                                   .stage(vk::pipeline_stage_flag::transfer)
@@ -493,7 +507,14 @@ auto main() -> int
     try
     {
         auto backend     = initialize_backend();
-        auto gui_backend = initialize_gui_backend(backend);
+        auto gui_backend = initialize_gui_backend({
+            .device         = backend->device.getmut(),
+            .extent         = backend->swapchain->extent,
+            .graphics_queue = backend->graphics_qf->queues.front(),
+            .transfer_queue = backend->transfer_qf->queues.front(),
+            .graphics_qf    = backend->graphics_qf->index,
+            .transfer_qf    = backend->transfer_qf->index,
+        });
 
         ui32 frame = 0;
 
@@ -522,8 +543,7 @@ auto main() -> int
             {
                 backend->device->wait().unwrap();
                 backend->swapchain->rebuild().unwrap();
-
-                gui_backend->create_surfaces(*backend);
+                gui_backend->create_surfaces();
                 continue;
             }
             else if (res.is_error())
